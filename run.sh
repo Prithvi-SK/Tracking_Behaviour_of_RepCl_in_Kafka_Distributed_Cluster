@@ -7,7 +7,7 @@ sudo docker-compose up -d
 # check topics
 sudo docker exec -it kafka kafka-topics --bootstrap-server kafka:9092 --list
 
-sudo docker exec -it kafka kafka-topics --create --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3 --topic clkclk
+sudo docker exec -it kafka kafka-topics --create --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3 --topic scale_clk
 
 sudo docker-compose up -d
 
