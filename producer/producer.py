@@ -15,40 +15,27 @@
 from kafka import KafkaProducer, KafkaConsumer
 import time
 import json
+import random
 
-request_topic = 'requesttopic'
-response_topic = 'responsetopic'
+request_topic = 'p1p2'
+response_topic = 'p2p1'
+sync_topic = 'synctopic'
 bootstrap_servers = 'kafka:9092'
 
 
 producer = KafkaProducer(bootstrap_servers=bootstrap_servers,
                          value_serializer=lambda v: json.dumps(v).encode('utf-8'))
-consumer = KafkaConsumer(response_topic, 
-                         bootstrap_servers=bootstrap_servers, 
-                         auto_offset_reset='earliest', 
-                         group_id='test-group', 
-                         enable_auto_commit=True,
-                         value_deserializer=lambda v: json.loads(v.decode('utf-8')))
 
-# Send message to consumer
-message = time.strftime("%H:%M:%S",time.localtime())
-message={"hello":"world"}
-producer.send(request_topic, value=message)
-producer.flush()
-print(f'Sent: {message}')
-time.sleep(5)
+current=time.strftime("%H:%M:%S",time.localtime())
+message={
+    "flag" : "0",
+    "sync_time" : current
+    }
 
-# producer.send(request_topic, b'Hello, Consumer! Please process this.')
-# producer.flush()
-# print("Message sent to request-topic.")
+while True:
+    time.sleep(10)
+    producer.send(sync_topic,value=message)
+    producer.flush()
 
-# Wait for response
-for msg in consumer:
-    print(f"raw {msg.value}")
-    # try:
-    #     data = json.loads(msg.value.decode('utf-8'))
-    #     print(f"Received: {data}")
-    # except json.JSONDecodeError as e:
-    #     print(f"Skipping corrupted message: {e}")
-    # print(f"Received: {msg.value}")
-    break  # Exit after receiving one response
+    print(f"Syncing {message}",flush=True)
+
