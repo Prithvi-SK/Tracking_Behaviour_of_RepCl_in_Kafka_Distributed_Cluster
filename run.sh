@@ -9,6 +9,11 @@ sudo docker exec -it kafka kafka-topics --bootstrap-server kafka:9092 --list
 
 sudo docker exec -it kafka kafka-topics --create --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3 --topic scale_clk
 
+sudo docker exec -it kafka kafka-topics --delete --bootstrap-server kafka:9092 --topic scale_clk
+
+sudo docker exec -it kafka kafka-consumer-groups.sh --bootstrap-server kafka:9092 --group test-group --reset-offsets --to-earliest --execute --topic synctopic
+
+
 sudo docker-compose up -d
 
 # in ./producer

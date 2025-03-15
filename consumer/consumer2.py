@@ -34,7 +34,7 @@ response_topic = 'p2p1'
 sync_topic='synctopic'
 bootstrap_servers = 'kafka:9092'
 
-consumer = KafkaConsumer(request_topic, sync_topic,
+consumer = KafkaConsumer(sync_topic, request_topic,
                          bootstrap_servers=bootstrap_servers, 
                          auto_offset_reset='earliest', 
                          group_id='test-group', 
@@ -44,6 +44,7 @@ producer = KafkaProducer(bootstrap_servers=bootstrap_servers,
                          value_serializer=lambda v: json.dumps(v).encode('utf-8'))
 
 logical_time=0
+received_time=0
 physical_time=[11,59,55]
 
 message={
@@ -75,12 +76,15 @@ def drifter():
 
 
 def receiver(msg):
-    global message, logical_time, physical_time
+    global message, logical_time, physical_time, received_time
 
     msg=msg.value
     received_time=msg["logical_time"]
+    print(received_time,logical_time,flush=True)
     logical_time=max(received_time, logical_time)+1
+    msg["logical_time"]=logical_time
     message["logical_time"]=logical_time
+    
 
     print(f"Received\n{msg}\n",flush=True)
 
@@ -89,10 +93,10 @@ def sender():
     global message, logical_time, physical_time
 
     logical_time=logical_time+1
-    message["logical_time"]=logical_time
-    message["event"]="Hi! I am from p2"
 
     drifter()
+    message["event"]="Hi! I am from p2"
+    message["logical_time"]=logical_time
     message["physical_time"]=physical_time
 
     producer.send(response_topic,value=message)
@@ -111,13 +115,21 @@ def synchronizer(msg):
     physical_time=synchronized_time
     print(f"syncing {physical_time}", flush=True)
 
+try:
+    for msg in consumer:
+        # print(msg.value)
+        if msg.value["flag"]=="0":
+            print("AAAAAAAAAAAAAAAAAAAAAAAAAAAA",flush=True)
+            synchronizer(msg)
+        else:
+            receiver(msg)
+            # time.sleep(1)
+            sender()
+            # time.sleep(5)
+        
+        consumer.commit()
+            # break  
 
-for msg in consumer:
-    if msg.value["flag"]=="0":
-        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAA",flush=True)
-        synchronizer(msg)
-    else:
-        receiver(msg)
-        sender()
-        time.sleep(5)
-        # break  
+except KeyboardInterrupt:
+    consumer.commit()
+    consumer.close()
