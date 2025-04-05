@@ -17,15 +17,15 @@ import time
 import json
 import random
 
-request_topic = 'p1p2'
-response_topic = 'p2p1'
+p1p2 = 'p1p2'
+p2p1 = 'p2p1'
 sync_topic = 'synctopic'
 bootstrap_servers = 'kafka:9092'
 
 
 producer = KafkaProducer(bootstrap_servers=bootstrap_servers,
                          value_serializer=lambda v: json.dumps(v).encode('utf-8'))
-consumer = KafkaConsumer(sync_topic, response_topic, 
+consumer = KafkaConsumer(sync_topic, p2p1, 
                          bootstrap_servers=bootstrap_servers, 
                          auto_offset_reset='earliest', 
                          group_id='test-group', 
@@ -76,7 +76,7 @@ def sender():
     message["logical_time"]=logical_time
     message["physical_time"]=physical_time
 
-    producer.send(request_topic,value=message)
+    producer.send(p1p2,value=message)
     producer.flush()
 
     print(f"sending\n{message}\n",flush=True)
