@@ -377,6 +377,22 @@ try:
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 
+    sync_consumer = KafkaConsumer(
+    sync_topic,
+    bootstrap_servers=bootstrap_servers,
+    auto_offset_reset='earliest',
+    group_id=consumer_name,
+    value_deserializer=lambda v: json.loads(v.decode('utf-8'))
+    )
+
+    def listen_to_sync():
+        for msg in sync_consumer:
+            print("I am a thread")
+            synchronize_clock(msg)
+
+    sync_thread = threading.Thread(target=listen_to_sync, daemon=True)
+    sync_thread.start()
+
     # Global variables
     logical_time = 0
     physical_time = list(map(int, time.strftime("%H:%M:%S", time.localtime()).split(':')))
@@ -419,5 +435,6 @@ try:
 
 except KeyboardInterrupt:
     unregister_consumer(consumer_name)
+    sync_consumer.commit()
     consumer.commit()
     consumer.close()
