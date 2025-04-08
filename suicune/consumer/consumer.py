@@ -378,17 +378,24 @@ try:
     )
 
     sync_consumer = KafkaConsumer(
-    sync_topic,
-    bootstrap_servers=bootstrap_servers,
-    auto_offset_reset='earliest',
-    group_id=consumer_name,
-    value_deserializer=lambda v: json.loads(v.decode('utf-8'))
+        sync_topic,
+        bootstrap_servers=bootstrap_servers,
+        auto_offset_reset='earliest',
+        group_id=None,
+        enable_auto_commit=False,
+        value_deserializer=lambda v: json.loads(v.decode('utf-8'))
     )
+    sync_consumer.poll(timeout_ms=1000)
+
+    for partition in sync_consumer.assignment():
+        sync_consumer.seek_to_end(partition)
 
     def listen_to_sync():
         for msg in sync_consumer:
             print("I am a thread")
             synchronize_clock(msg)
+            # sync_consumer.commit()
+
 
     sync_thread = threading.Thread(target=listen_to_sync, daemon=True)
     sync_thread.start()
@@ -398,20 +405,23 @@ try:
     physical_time = list(map(int, time.strftime("%H:%M:%S", time.localtime()).split(':')))
 
     message = {
-    "flag": "1",
-    "process": consumer_name,
-    "logical_time": logical_time,
-    "physical_time": physical_time,
-    "event": f"Hi! I am from {consumer_name}"
+        "flag": "1",
+        "process": consumer_name,
+        "logical_time": logical_time,
+        "physical_time": physical_time,
+        "event": f"Hi! I am from {consumer_name}"
     }
 
     # Start listening for updates in a separate thread
     update_listener_thread = threading.Thread(target=listen_for_updates, args=(consumer_name, consumer), daemon=True)
     update_listener_thread.start()
 
-    if len(topics) > 0 and consumer_name == "p1":
+    print("I am legend",consumer.subscription())
+    if len(consumer.subscription())== 2:
         # random_topic = random.choice(list(topics))
-        message_sender(consumer_name, "p1p0")
+        for j in list(consumer.subscription()):
+            if j!="synctopic":
+                message_sender(consumer_name,j[2:4]+j[0:2])
     print("hi")
     
     for msg in consumer:
@@ -434,7 +444,16 @@ try:
         consumer.commit()
 
 except KeyboardInterrupt:
+
+    possible_recipients = [p for p in redis_client.smembers("active_consumers") if p != consumer_name]
+    if possible_recipients:
+        next_recipient = random.choice(possible_recipients)
+        print(possible_recipients)
+        print(next_recipient)
+        message_sender(consumer_name, f"{consumer_name}{next_recipient}")
+
     unregister_consumer(consumer_name)
-    sync_consumer.commit()
+    # sync_consumer.commit()
+    sync_consumer.close()
     consumer.commit()
     consumer.close()
