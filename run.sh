@@ -30,3 +30,7 @@ sudo docker run --rm --network jolt_kafka-bridge --name consumer1 kafka-consumer
 #Consumer 2
 sudo docker build -t kafka-consumer-2 -f Dockerfile-2 .
 sudo docker run --rm --network jolt_kafka-bridge --name consumer2 kafka-consumer-2
+
+docker-compose run --rm --name consumer_p1 consumer
+docker-compose up producer
+docker-compose build producer consumer
