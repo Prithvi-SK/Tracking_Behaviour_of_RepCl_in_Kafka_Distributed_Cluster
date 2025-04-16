@@ -76,11 +76,39 @@ services:
     networks:
       - kafka-bridge
 
-  producer:
+  # producer:
+  #   build:
+  #     context: ./producer
+  #     dockerfile: Dockerfile-producer
+  #   container_name: producer
+  #   depends_on:
+  #     - kafka
+  #     - redis
+  #   networks:
+  #     - kafka-bridge
+  #   restart: on-failure
+
+  producer1:
     build:
       context: ./producer
       dockerfile: Dockerfile-producer
-    container_name: producer
+    container_name: producer1
+    environment:
+      - PRODUCER_ID=p1
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - kafka-bridge
+    restart: on-failure
+
+  producer2:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile-producer
+    container_name: producer2
+    environment:
+      - PRODUCER_ID=p2
     depends_on:
       - kafka
       - redis
