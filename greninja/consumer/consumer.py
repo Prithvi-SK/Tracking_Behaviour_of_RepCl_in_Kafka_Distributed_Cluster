@@ -304,6 +304,7 @@ redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
 sync_topic = 'synctopic'
 update_topic = 'update_topic'
 stop_event = threading.Event()
+time_lock = threading.Lock()
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -377,17 +378,17 @@ def message_receiver(msg, logical_time):
     print(f"Received:\n{msg}\n", flush=True)
     return msg["process"], logical_time
 
-def message_sender(consumer_name, topic, message, logical_time, physical_time, producer):
+def message_sender(consumer_name, topic, message, logical_time, physical_time, producer, next_recipient):
     """Sends messages with updated logical and physical times."""
     logical_time += 1
-    physical_time = update_physical_time(physical_time)
+    # physical_time = update_physical_time(physical_time)
     message.update({
         "logical_time": logical_time,
         "physical_time": physical_time
     })
     producer.send(topic, value=message)
     producer.flush()
-    print(f"Sending:\n{message}\n", flush=True)
+    print(f"Sending to {next_recipient}:\n{message}\n", flush=True)
     return logical_time
 
 def synchronize_clock(msg, physical_time):
@@ -463,7 +464,10 @@ def main():
                 for _, msg_list in messages.items():
                     for msg in msg_list:
                         if msg.value["flag"] == "0":
-                            synchronize_clock(msg, physical_time)
+                            with time_lock:
+                                synchronize_clock(msg, physical_time)
+                                print(f"Registered Consumer: {consumer_name} | Subscribed Topics: {consumer.subscription()}", flush=True)
+                                print(redis_client.smembers("active_consumers"))
             except Exception as e:
                 if not stop_event.is_set():
                     print(f"Sync thread error: {e}", flush=True)
@@ -473,20 +477,39 @@ def main():
     update_listener_thread = threading.Thread(target=listen_for_updates, args=(consumer_name, consumer), daemon=True)
     update_listener_thread.start()
 
+    def periodic_random_sender():
+        nonlocal logical_time, physical_time
+        while not stop_event.is_set():
+            time.sleep(random.randint(1, 5))
+            with time_lock:
+                recipients = redis_client.smembers("active_consumers")
+                # If it's awaitable, set to empty list; if set, convert to list
+                if hasattr(recipients, '__await__'):
+                    recipients = []
+                elif isinstance(recipients, set):
+                    recipients = list(recipients)
+                possible_recipients = [p for p in recipients if p != consumer_name]
+                if possible_recipients:
+                    next_recipient = random.choice(possible_recipients)
+                    topic = f"{consumer_name}{next_recipient}"
+                    logical_time = message_sender(
+                        consumer_name, topic, message.copy(), logical_time, physical_time, producer, next_recipient
+                    )
+    sender_thread = threading.Thread(target=periodic_random_sender, daemon=True)
+    sender_thread.start()
+
     # Initiate communication if joining with other consumers
     # active_consumers = redis_client.smembers("active_consumers")
     # if len(active_consumers) > 1:
     #     recipient = random.choice([p for p in active_consumers if p != consumer_name])
     #     topic = f"{consumer_name}{recipient}"
     #     logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
-  
-  
-    if len(consumer.subscription())== 2:
-        # random_topic = random.choice(list(topics))
-        for j in list(consumer.subscription()):
-            if j!="synctopic":
-                # message_sender(consumer_name,j[2:4]+j[0:2])
-                logical_time = message_sender(consumer_name, j[2:4]+j[0:2], message.copy(), logical_time, physical_time, producer)
+    
+    # Removed old single-sender logic
+    # if len(consumer.subscription())== 2:
+    #     for j in list(consumer.subscription()):
+    #         if j!="synctopic":
+    #             logical_time = message_sender(consumer_name, j[2:4]+j[0:2], message.copy(), logical_time, physical_time, producer)
   
   
     try:
@@ -494,41 +517,57 @@ def main():
             if msg.value["flag"] == "0":
                 continue
             exception_level=1
-            sender, logical_time = message_receiver(msg, logical_time)
+            with time_lock:
+                sender, logical_time = message_receiver(msg, logical_time)
             exception_level=2
-            time.sleep(3)  # Reduced delay for responsiveness
-            possible_recipients = [p for p in redis_client.smembers("active_consumers") if p != consumer_name]
+            time.sleep(5)  # Reduced delay for responsiveness
+            recipients = redis_client.smembers("active_consumers")
+            if hasattr(recipients, '__await__'):
+                recipients = []
+            elif isinstance(recipients, set):
+                recipients = list(recipients)
+            possible_recipients = [p for p in recipients if p != consumer_name]
             if possible_recipients:
                 next_recipient = random.choice(possible_recipients)
                 topic = f"{consumer_name}{next_recipient}"
-
-                logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
-            
+                with time_lock:
+                    logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer, next_recipient)
             exception_level=4
             consumer.commit()
 
 
+    # except KeyboardInterrupt:
+    #     if exception_level==1:
+    #         with time_lock:
+    #             sender, logical_time = message_receiver(msg, logical_time)
+    #         recipients = redis_client.smembers("active_consumers")
+    #         if hasattr(recipients, '__await__'):
+    #             recipients = []
+    #         elif isinstance(recipients, set):
+    #             recipients = list(recipients)
+    #         possible_recipients = [p for p in recipients if p != consumer_name]
+    #         if possible_recipients:
+    #             next_recipient = random.choice(possible_recipients)
+    #             topic = f"{consumer_name}{next_recipient}"
+    #             with time_lock:
+    #                 logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
+    #     elif exception_level==2:
+    #         recipients = redis_client.smembers("active_consumers")
+    #         if hasattr(recipients, '__await__'):
+    #             recipients = []
+    #         elif isinstance(recipients, set):
+    #             recipients = list(recipients)
+    #         possible_recipients = [p for p in recipients if p != consumer_name]
+    #         if possible_recipients:
+    #             next_recipient = random.choice(possible_recipients)
+    #             topic = f"{consumer_name}{next_recipient}"
+    #             with time_lock:
+    #                 logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
+    #         # next_recipient = random.choice(possible_recipients)
+    #         # topic = f"{consumer_name}{next_recipient}"
+    #         # message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
+
     except KeyboardInterrupt:
-        if exception_level==1:
-            sender, logical_time = message_receiver(msg, logical_time)
-            possible_recipients = [p for p in redis_client.smembers("active_consumers") if p != consumer_name]
-            if possible_recipients:
-                next_recipient = random.choice(possible_recipients)
-                topic = f"{consumer_name}{next_recipient}"
-
-                logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
-        elif exception_level==2:
-            possible_recipients = [p for p in redis_client.smembers("active_consumers") if p != consumer_name]
-            if possible_recipients:
-                next_recipient = random.choice(possible_recipients)
-                topic = f"{consumer_name}{next_recipient}"
-
-                logical_time = message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
-            # next_recipient = random.choice(possible_recipients)
-            # topic = f"{consumer_name}{next_recipient}"
-            # message_sender(consumer_name, topic, message.copy(), logical_time, physical_time, producer)
-
-    finally:
         unregister_consumer(consumer_name)
         stop_event.set()
         sync_thread.join(timeout=2)

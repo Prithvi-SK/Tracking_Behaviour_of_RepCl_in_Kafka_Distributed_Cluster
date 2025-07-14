@@ -1,0 +1,17 @@
+⟨mx.j, bitmap.j[], offset.j[], counter.j[]⟩
+
+mx.j: Max epoch that process j is aware of.
+
+bitmap.j[]: Indicates for which processes the offset is explicitly maintained.
+
+offset.j[]: Stores the offset (i.e., mx.j - mx.k) for process k.
+
+counter.j[]: Distinguishes multiple events in the same epoch.
+
+
+
+Shift: Changes mx and adjusts all offsets accordingly. Ensures offset ≤ ε.
+
+MergeSameEpoch: Combines two timestamps by taking the min of offsets for each process.
+
+EqualOffset: Compares two timestamps for equal offsets and mx values.
