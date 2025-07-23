@@ -675,6 +675,7 @@ import json
 import random
 import threading
 import uuid
+from datetime import datetime
 
 bootstrap_servers = 'kafka:9092'
 redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
@@ -682,8 +683,10 @@ sync_topic = 'synctopic'
 update_topic = 'update_topic'
 stop_event = threading.Event()
 time_lock = threading.Lock()
-I = 5  # Epoch size in seconds
-EPSILON = 10  # Maximum clock skew in epochs
+# I = 100*0.000001  # Epoch size in seconds
+# EPSILON = 1000*0.000001  # Maximum clock skew in epochs
+I = 100000  # Epoch size in microseconds
+EPSILON = 1000000   # Maximum clock skew in epochs
 MAX_PROCESSES = 10  # Fixed list size for bitmap, offsets, counters
 
 class RepCl:
@@ -825,9 +828,9 @@ def update_repcl_receive(repcl_j, repcl_m, pt, process_id):
         ts_c.bitmap[process_id] = 1 if ts_c.get_offset_at_index(process_id) < EPSILON else 0
     return RepCl(ts_c.mx, ts_c.bitmap, ts_c.offsets, new_counters)
 
-def time_to_seconds(time_list):
-    H, M, S = time_list
-    return H * 3600 + M * 60 + S
+# def time_to_seconds(time_list):
+#     H, M, S = time_list
+#     return H * 3600 + M * 60 + S
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -876,6 +879,7 @@ def unregister_consumer(consumer_name):
     if not redis_client.scard("active_consumers"):
         redis_client.delete("consumer_count", "topics")
 
+# Commented not in use rn
 def create_topics(topics):
     admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
     existing_topics = admin_client.list_topics()
@@ -890,7 +894,7 @@ def create_topics(topics):
 def message_receiver(msg, logical_time, repcl, process_id):
     msg = msg.value
     logical_time = max(msg["logical_time"], logical_time) + 1
-    pt = time_to_seconds(msg["physical_time"])
+    pt = msg["physical_time"]
     repcl_m = RepCl.from_dict(msg["repcl"])
     repcl = update_repcl_receive(repcl, repcl_m, pt, process_id)
     msg["logical_time"] = logical_time
@@ -900,8 +904,8 @@ def message_receiver(msg, logical_time, repcl, process_id):
 
 def message_sender(consumer_name, topic, message, logical_time, physical_time, producer, next_recipient, repcl, process_id):
     logical_time += 1
-    pt = time_to_seconds(physical_time)
-    repcl = update_repcl_send(repcl, pt, process_id)
+    # pt = time_to_seconds(physical_time)
+    repcl = update_repcl_send(repcl, physical_time, process_id)
     message.update({
         "logical_time": logical_time,
         "physical_time": physical_time,
@@ -913,22 +917,22 @@ def message_sender(consumer_name, topic, message, logical_time, physical_time, p
     return logical_time, repcl
 
 def synchronize_clock(msg, physical_time):
-    sync_str = msg.value["sync_time"]
-    physical_time[:] = list(map(int, sync_str.split(':')))
+    physical_time = msg.value["sync_time"]
+    # physical_time[:] = list(map(int, sync_str.split(':')))
     print(f"Syncing {physical_time}", flush=True)
     return physical_time
 
 def update_physical_time(physical_time):
-    drift = random.randint(0, 5)
-    physical_time[2] += drift
-    while physical_time[2] >= 60:
-        physical_time[2] -= 60
-        physical_time[1] += 1
-    while physical_time[1] >= 60:
-        physical_time[1] -= 60
-        physical_time[0] += 1
-    physical_time[0] %= 24
-    return physical_time
+    # drift = random.randint(0, 5)
+    # physical_time[2] += drift
+    # while physical_time[2] >= 60:
+    #     physical_time[2] -= 60
+    #     physical_time[1] += 1
+    # while physical_time[1] >= 60:
+    #     physical_time[1] -= 60
+    #     physical_time[0] += 1
+    # physical_time[0] %= 24
+    return datetime.now().second * 1_000_000 + datetime.now().microsecond
 
 def main():
     consumer_name, topics = register_consumer()
@@ -940,7 +944,7 @@ def main():
     initial_bitmap[process_id] = 1
     repcl = RepCl(mx=0, bitmap=initial_bitmap, offsets=initial_offsets, counters=[0] * MAX_PROCESSES)
 
-    create_topics(topics)
+    # create_topics(topics)
 
     consumer = KafkaConsumer(
         sync_topic, *topics,
@@ -972,7 +976,7 @@ def main():
     print(f"Registered Consumer: {consumer_name} | Subscribed Topics: {consumer.subscription()}", flush=True)
 
     logical_time = 0
-    physical_time = list(map(int, time.strftime("%H:%M:%S").split(':')))
+    physical_time = datetime.now().second * 1_000_000 + datetime.now().microsecond
     message = {
         "flag": "1",
         "process": consumer_name,
@@ -1005,7 +1009,7 @@ def main():
     def periodic_random_sender():
         nonlocal logical_time, physical_time, repcl
         while not stop_event.is_set():
-            time.sleep(random.randint(1, 5))
+            time.sleep(random.uniform(0.5*0.00001, 1*0.00001))
             with time_lock:
                 recipients = redis_client.smembers("active_consumers")
                 if hasattr(recipients, '__await__'):
@@ -1016,6 +1020,7 @@ def main():
                 if possible_recipients:
                     next_recipient = random.choice(possible_recipients)
                     topic = f"{consumer_name}{next_recipient}"
+                    physical_time=update_physical_time(physical_time)
                     logical_time, repcl = message_sender(
                         consumer_name, topic, message.copy(), logical_time, physical_time, producer, next_recipient, repcl, process_id
                     )
@@ -1029,21 +1034,25 @@ def main():
                 continue
             with time_lock:
                 sender, logical_time, repcl = message_receiver(msg, logical_time, repcl, process_id)
-            time.sleep(5)
-            recipients = redis_client.smembers("active_consumers")
-            if hasattr(recipients, '__await__'):
-                recipients = []
-            elif isinstance(recipients, set):
-                recipients = list(recipients)
-            possible_recipients = [p for p in recipients if p != consumer_name]
-            if possible_recipients:
-                next_recipient = random.choice(possible_recipients)
-                topic = f"{consumer_name}{next_recipient}"
-                with time_lock:
-                    logical_time, repcl = message_sender(
-                        consumer_name, topic, message.copy(), logical_time, physical_time, producer, next_recipient, repcl, process_id
-                    )
-            consumer.commit()
+            
+
+            # UNCOMMENT this when we want to see the offsets changing clearly
+            
+            # time.sleep(5)
+            # recipients = redis_client.smembers("active_consumers")
+            # if hasattr(recipients, '__await__'):
+            #     recipients = []
+            # elif isinstance(recipients, set):
+            #     recipients = list(recipients)
+            # possible_recipients = [p for p in recipients if p != consumer_name]
+            # if possible_recipients:
+            #     next_recipient = random.choice(possible_recipients)
+            #     topic = f"{consumer_name}{next_recipient}"
+            #     with time_lock:
+            #         logical_time, repcl = message_sender(
+            #             consumer_name, topic, message.copy(), logical_time, physical_time, producer, next_recipient, repcl, process_id
+            #         )
+            # consumer.commit()
 
     except KeyboardInterrupt:
         unregister_consumer(consumer_name)

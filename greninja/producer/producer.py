@@ -30,6 +30,7 @@ import time
 import json
 import redis
 import os
+from datetime import datetime
 
 producer_id = os.getenv("PRODUCER_ID", "default")
 sync_topic = 'synctopic'
@@ -60,7 +61,8 @@ try:
 
         if current_leader == producer_id or attempt_leadership():
             # This instance is the leader
-            current_time = time.strftime("%H:%M:%S", time.localtime())
+            # current_time = time.strftime("%H:%M:%S", time.localtime())
+            current_time = datetime.now().second * 1_000_000 + datetime.now().microsecond
             message = {"flag": "0", "sync_time": current_time, "by": producer_id}
 
             kafka_producer.send(sync_topic, value=message)
@@ -70,11 +72,12 @@ try:
 
             # Refresh leadership TTL to signal liveness
             refresh_leadership()
-            time.sleep(10)
+            time.sleep(5)
+            # time.sleep(100*0.000001)
 
         else:
             print(f"[{producer_id}] Not leader. Current leader: {current_leader}", flush=True)
-            time.sleep(5)  # Check again after short wait
+            time.sleep(10)  # Check again after short wait
 
 except KeyboardInterrupt:
     kafka_producer.close()
